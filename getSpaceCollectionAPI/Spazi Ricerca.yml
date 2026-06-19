@@ -1,0 +1,18 @@
+info:
+  name: Spazi Ricerca
+  type: http
+  seq: 3
+
+http:
+  method: POST
+  url: http://localhost:3000/api/spazi
+  body:
+    type: json
+    data: "{{spazio_ricerca_paginata}}"
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

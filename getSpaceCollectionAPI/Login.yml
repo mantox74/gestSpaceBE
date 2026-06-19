@@ -1,0 +1,49 @@
+info:
+  name: Login
+  type: http
+  seq: 1
+
+http:
+  method: POST
+  url: http://localhost:3000/api/auth/login
+  body:
+    type: json
+    data: |-
+      {
+        "email": "mantovani.massimiliano@gmail.com",
+        "password": "mantox74!"
+      }
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        // console.log("SCRIPT ESEGUITO");
+        // console.log("status: " + res.status);
+        // console.log("body: " + JSON.stringify(res.body));
+
+        const token = res.body.token;
+
+        if (token) {
+          bru.setEnvVar("jwt_token", token);
+          bru.setVar("jwt_token", token);
+        //   console.log("Token salvato: " + token);
+        } else {
+          console.log("Token non trovato!");
+        }
+  actions:
+    - type: set-variable
+      phase: after-response
+      selector:
+        expression: res.body.token
+        method: jsonq
+      variable:
+        name: jwt_token
+        scope: runtime
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

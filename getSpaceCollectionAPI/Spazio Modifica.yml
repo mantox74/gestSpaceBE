@@ -1,0 +1,22 @@
+info:
+  name: Spazio Modifica
+  type: http
+  seq: 5
+
+http:
+  method: PUT
+  url: http://localhost:3000/api/spazi/2
+  body:
+    type: json
+    data: |-
+      {
+        "prezzo_giorno": 22.00,
+        "note": "Ingresso lato sud - aggiornato"
+      }
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5

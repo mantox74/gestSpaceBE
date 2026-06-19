@@ -1,0 +1,31 @@
+info:
+  name: Clienti Crea
+  type: http
+  seq: 9
+
+http:
+  method: POST
+  url: http://localhost:3000/api/clienti/nuovo
+  body:
+    type: json
+    data: |-
+      {
+        "nome": "PIPPO",
+        "cognome": "DISNEY",
+        "email": "pippo@disnaey.it",
+        "indirizzo": "Via Roma",
+        "codice_fiscale": "KGIUIUDIUY546DD",
+        "p_iva": "0654654654654",
+        "citta": "Rimini",
+        "provincia":"RN",
+        "numero_civico": 26,
+        "cap": 20010,
+        "telefono": 657987654165
+      }
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
