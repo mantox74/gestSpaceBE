@@ -10,7 +10,7 @@ router.post('/login', async (req, res) => {
   const { email, password } = req.body;
 
   try {
-    // Cerca utente nel DB
+    // Cerca utente nel DB test
     const result = await pool.query(
       'SELECT * FROM utenti WHERE email = $1',
       [email]
