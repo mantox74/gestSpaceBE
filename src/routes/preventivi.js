@@ -92,7 +92,9 @@ router.post('/', auth, async (req, res) => {
       `SELECT pv.*,
               c.nome AS cliente_nome, c.cognome AS cliente_cognome,
               c.email AS cliente_email, c.telefono AS cliente_telefono,
-              s.nome AS spazio_nome, s.prezzo_giorno
+              c.indirizzo AS cliente_indirizzo, c.citta AS cliente_citta, c.cap AS cliente_cap,
+              c.codice_fiscale AS cliente_codice_fiscale, c.p_iva AS cliente_p_iva,
+              s.nome AS spazio_nome, s.prezzo_giorno, s.lunghezza, s.larghezza, s.altezza
        FROM preventivi pv
        JOIN clienti c ON pv.cliente_id = c.id
        JOIN spazi s ON pv.spazio_id = s.id
@@ -100,7 +102,52 @@ router.post('/', auth, async (req, res) => {
        ORDER BY ${colonnaOrdinamento} ${direzioneSql}`,
       valori
     );
-    res.json(result.rows);
+
+// mappo la risposta in modo più logico
+const preventiviMapped = result.rows.map(row => {
+  const {
+    cliente_nome,
+    cliente_cognome,
+    cliente_email,
+    cliente_telefono,
+    cliente_indirizzo,
+    cliente_citta,
+    cliente_cap,
+    cliente_codice_fiscale,
+    cliente_p_iva,
+    spazio_nome,
+    prezzo_giorno,
+    lunghezza,
+    larghezza,
+    altezza,
+    ...preventivo
+  } = row;
+
+  return {
+      ...preventivo,
+      cliente: {
+        id: preventivo.cliente_id,
+        nome: cliente_nome,
+        cognome: cliente_cognome,
+        email: cliente_email,
+        telefono: cliente_telefono,
+        indirizzo: cliente_indirizzo,
+        citta: cliente_citta,
+        cap: cliente_cap,
+        p_iva: cliente_p_iva,
+        codice_fiscale: cliente_codice_fiscale
+      },
+      spazio: {
+        id: preventivo.spazio_id,
+        nome: spazio_nome,
+        prezzo_giorno,
+        lunghezza,
+        larghezza,
+        altezza
+      }
+    }});
+
+    res.json(preventiviMapped);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Errore interno del server' });
