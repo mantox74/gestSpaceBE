@@ -3,6 +3,16 @@ const router = express.Router();
 const pool = require('../db');
 const auth = require('../middleware/auth');
 
+const STATI_PREVENTIVO = Object.freeze({
+  BOZZA: 'BOZZA',
+  INVIATO: 'INVIATO',
+  ACCETTATO: 'ACCETTATO',
+  RIFIUTATO: 'RIFIUTATO',
+  ANNULLATO: 'ANNULLATO',
+});
+
+const STATI_PREVENTIVO_VALUES = Object.values(STATI_PREVENTIVO);
+
 // Funzione helper: calcola importo preventivo
 function calcolaImporto(dataInizio, dataFine, prezzoGiorno) {
   const inizio = new Date(dataInizio);
@@ -85,10 +95,10 @@ router.post('/', auth, async (req, res) => {
     const calcolo = calcolaImporto(data_inizio, data_fine, prezzoGiorno);
 
     const result = await pool.query(
-      `INSERT INTO preventivi (cliente_id, spazio_id, data_inizio, data_fine, importo_totale, note)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO preventivi (cliente_id, spazio_id, data_inizio, data_fine, importo_totale, note, stato)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING *`,
-      [cliente_id, spazio_id, data_inizio, data_fine, calcolo.importo, note]
+      [cliente_id, spazio_id, data_inizio, data_fine, calcolo.importo, note, STATI_PREVENTIVO.BOZZA]
     );
 
     res.status(201).json({
@@ -108,8 +118,8 @@ router.post('/', auth, async (req, res) => {
 });
 
 // PUT /api/preventivi/:id - modifica preventivo
-router.put('/:id', auth, async (req, res) => {
-  const { cliente_id, spazio_id, data_inizio, data_fine, stato, note } = req.body;
+router.put('/:id/modifica', auth, async (req, res) => {
+  const { cliente_id, spazio_id, data_inizio, data_fine, note } = req.body;
 
   try {
     const esistente = await pool.query(
@@ -119,17 +129,18 @@ router.put('/:id', auth, async (req, res) => {
     if (esistente.rows.length === 0) {
       return res.status(404).json({ error: 'Preventivo non trovato' });
     }
-
-    // Un preventivo accettato non può essere modificato
-    if (esistente.rows[0].stato === 'ACCETTATO') {
-      return res.status(400).json({ error: 'Un preventivo accettato non può essere modificato' });
-    }
-
+ 
     const attuale = esistente.rows[0];
+ 
+    // Un preventivo accettato, rifiutato o annullato non può essere modificato
+    if ([STATI_PREVENTIVO.ACCETTATO, STATI_PREVENTIVO.RIFIUTATO, STATI_PREVENTIVO.ANNULLATO].includes(attuale.stato)) {
+      return res.status(400).json({ error: `Un preventivo in stato ${attuale.stato} non può essere modificato` });
+    }
+ 
     const nuovoInizio = data_inizio || attuale.data_inizio;
     const nuovaFine = data_fine || attuale.data_fine;
     const nuovoSpazio = spazio_id || attuale.spazio_id;
-
+ 
     // Ricalcola importo se cambiano date o spazio
     const spazio = await pool.query(
       'SELECT prezzo_giorno FROM spazi WHERE id = $1',
@@ -137,21 +148,27 @@ router.put('/:id', auth, async (req, res) => {
     );
     const prezzoGiorno = parseFloat(spazio.rows[0].prezzo_giorno);
     const calcolo = calcolaImporto(nuovoInizio, nuovaFine, prezzoGiorno);
-
+ 
+    // Se il preventivo era già stato inviato, una modifica ai dati lo
+    // invalida: torna in BOZZA finché non viene re-inviato esplicitamente.
+    // data_invio NON viene toccata qui: resta lo storico dell'ultimo invio
+    // reale, valorizzata solo da POST /:id/invia.
+    const nuovoStato = attuale.stato === STATI_PREVENTIVO.INVIATO ? STATI_PREVENTIVO.BOZZA : attuale.stato;
+ 
     const result = await pool.query(
       `UPDATE preventivi
        SET cliente_id = COALESCE($1, cliente_id),
            spazio_id = COALESCE($2, spazio_id),
            data_inizio = COALESCE($3, data_inizio),
            data_fine = COALESCE($4, data_fine),
-           stato = COALESCE($5, stato),
+           stato = $5,
            note = COALESCE($6, note),
            importo_totale = $7
        WHERE id = $8
        RETURNING *`,
-      [cliente_id, spazio_id, data_inizio, data_fine, stato, note, calcolo.importo, req.params.id]
+      [cliente_id, spazio_id, data_inizio, data_fine, nuovoStato, note, calcolo.importo, req.params.id]
     );
-
+ 
     res.json({
       ...result.rows[0],
       dettaglio: {
@@ -160,8 +177,45 @@ router.put('/:id', auth, async (req, res) => {
         importo_netto: calcolo.importo,
         importo_iva: (calcolo.importo * 22 / 100).toFixed(2),
         importo_totale: (calcolo.importo * 1.22).toFixed(2)
-      }
+      },
+      ...(nuovoStato !== attuale.stato && {
+        avviso: 'Il preventivo era stato inviato: è necessario reinviarlo al cliente.'
+      })
     });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Errore interno del server' });
+  }
+});
+
+// POST /api/preventivi/:id/invia - invia (o re-invia) il preventivo al cliente
+// Unico punto che valorizza stato = INVIATO e data_invio = NOW(), sia al
+// primo invio sia su invii successivi dopo una modifica.
+router.post('/:id/invia', auth, async (req, res) => {
+  try {
+    const esistente = await pool.query(
+      'SELECT * FROM preventivi WHERE id = $1',
+      [req.params.id]
+    );
+    if (esistente.rows.length === 0) {
+      return res.status(404).json({ error: 'Preventivo non trovato' });
+    }
+ 
+    const attuale = esistente.rows[0];
+ 
+    if ([STATI_PREVENTIVO.ACCETTATO, STATI_PREVENTIVO.RIFIUTATO, STATI_PREVENTIVO.ANNULLATO].includes(attuale.stato)) {
+      return res.status(400).json({ error: `Un preventivo in stato ${attuale.stato} non può essere inviato` });
+    }
+ 
+    const result = await pool.query(
+      `UPDATE preventivi
+       SET stato = $1, data_invio = NOW()
+       WHERE id = $2
+       RETURNING *`,
+      [STATI_PREVENTIVO.INVIATO, req.params.id]
+    );
+ 
+    res.json({ message: 'Preventivo inviato', preventivo: result.rows[0] });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Errore interno del server' });
@@ -181,8 +235,8 @@ router.post('/:id/converti', auth, async (req, res) => {
 
     const pv = preventivo.rows[0];
 
-    if (pv.stato === 'RIFIUTATO' || pv.stato === 'ANNULLATO') {
-      return res.status(400).json({ error: 'Non è possibile convertire un preventivo rifiutato o annullato' });
+    if (pv.stato == STATI_PREVENTIVO.RIFIUTATO || pv.stato === STATI_PREVENTIVO.ANNULLATO || pv.stato === STATI_PREVENTIVO.ACCETTATO) {
+      return res.status(400).json({ error: 'Non è possibile convertire un preventivo rifiutato, annullato o già accettato' });
     }
 
     // Controlla se esiste già una prenotazione collegata
@@ -218,8 +272,8 @@ router.post('/:id/converti', auth, async (req, res) => {
     );
 
     await pool.query(
-      'UPDATE preventivi SET stato = \'ACCETTATO\' WHERE id = $1',
-      [req.params.id]
+      'UPDATE preventivi SET stato = $1 WHERE id = $2',
+      [STATI_PREVENTIVO.ACCETTATO, req.params.id]
     );
 
     await pool.query('COMMIT');
@@ -235,8 +289,8 @@ router.post('/:id/converti', auth, async (req, res) => {
   }
 });
 
-// DELETE /api/preventivi/:id - rifiuta/elimina preventivo
-router.delete('/:id', auth, async (req, res) => {
+// PUT /api/preventivi/:id/rifiuta-annulla - rifiuta o annulla preventivo
+router.put('/:id/rifiuta-annulla', auth, async (req, res) => {
   try {
     const esistente = await pool.query(
       'SELECT * FROM preventivi WHERE id = $1',
@@ -246,19 +300,53 @@ router.delete('/:id', auth, async (req, res) => {
       return res.status(404).json({ error: 'Preventivo non trovato' });
     }
 
-    if (esistente.rows[0].stato === 'ACCETTATO') {
-      return res.status(400).json({ error: 'Non è possibile eliminare un preventivo già accettato' });
+    if (esistente.rows[0].stato === STATI_PREVENTIVO.ACCETTATO) {
+      return res.status(400).json({ error: 'Non è possibile rifiutare o annullare un preventivo già accettato' });
+    }
+
+    const nuovoStato = req.body.stato || STATI_PREVENTIVO.RIFIUTATO;
+    if (![STATI_PREVENTIVO.RIFIUTATO, STATI_PREVENTIVO.ANNULLATO].includes(nuovoStato)) {
+      return res.status(400).json({ error: 'Stato non valido. Valori ammessi: RIFIUTATO, ANNULLATO' });
     }
 
     const result = await pool.query(
-      'UPDATE preventivi SET stato = \'RIFIUTATO\' WHERE id = $1 RETURNING *',
-      [req.params.id]
+      'UPDATE preventivi SET stato = $1 WHERE id = $2 RETURNING *',
+      [nuovoStato, req.params.id]
     );
-    res.json({ message: 'Preventivo rifiutato', preventivo: result.rows[0] });
+    res.json({ message: `Preventivo ${nuovoStato.toLowerCase()}`, preventivo: result.rows[0] });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Errore interno del server' });
   }
 });
+
+// GET /api/preventivi/aperti - elenco preventivi aperti (stato = INVIATO)
+router.get('/aperti', auth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM preventivi WHERE stato = $1 ORDER BY data_invio DESC',
+      [STATI_PREVENTIVO.INVIATO]
+    );
+    res.json({ preventivi: result.rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Errore interno del server' });
+  }
+});
+
+// GET /api/preventivi/da-inviare - elenco preventivi da inviare (stato = BOZZA)
+router.get('/da-inviare', auth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM preventivi WHERE stato = $1 ORDER BY created_at DESC',
+      [STATI_PREVENTIVO.BOZZA]
+    );
+    res.json({ preventivi: result.rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Errore interno del server' });
+  }
+});
+
 
 module.exports = router;
