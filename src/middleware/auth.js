@@ -14,6 +14,9 @@ module.exports = (req, res, next) => {
     req.utente = decoded;
     next();
   } catch (err) {
-    return res.status(403).json({ error: 'Token non valido o scaduto' });
+    if (err.name === 'TokenExpiredError') {
+    return res.status(401).json({ error: 'Sessione scaduta, effettua nuovamente il login' });
+  }
+  return res.status(403).json({ error: 'Token non valido' });
   }
 };
