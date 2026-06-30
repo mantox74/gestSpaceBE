@@ -13,6 +13,14 @@ const STATI_PREVENTIVO = Object.freeze({
 
 const STATI_PREVENTIVO_VALUES = Object.values(STATI_PREVENTIVO);
 
+const CAMPI_ORDINABILI = {
+  created_at: 'pv.created_at',
+  data_inizio: 'pv.data_inizio',
+  data_fine: 'pv.data_fine',
+  importo_totale: 'pv.importo_totale',
+  stato: 'pv.stato',
+};
+
 // Funzione helper: calcola importo preventivo
 function calcolaImporto(dataInizio, dataFine, prezzoGiorno) {
   const inizio = new Date(dataInizio);
@@ -21,8 +29,64 @@ function calcolaImporto(dataInizio, dataFine, prezzoGiorno) {
   return { giorni, importo: prezzoGiorno * giorni };
 }
 
-// GET /api/preventivi - lista tutti i preventivi
+// GET /api/preventivi - lista preventivi con filtri e ordinamento
 router.get('/', auth, async (req, res) => {
+  const {
+    stato,
+    cliente_id,
+    spazio_id,
+    data_inizio_da,
+    data_inizio_a,
+    search,
+    ordina_per = 'created_at',
+    direzione = 'desc',
+  } = req.query;
+
+  // Validazione stato
+  if (stato && !STATI_PREVENTIVO_VALUES.includes(stato)) {
+    return res.status(400).json({ error: `Stato non valido. Valori ammessi: ${STATI_PREVENTIVO_VALUES.join(', ')}` });
+  }
+
+  // Validazione ordinamento (whitelist, mai input diretto in SQL)
+  const colonnaOrdinamento = CAMPI_ORDINABILI[ordina_per];
+  if (!colonnaOrdinamento) {
+    return res.status(400).json({ error: `Campo di ordinamento non valido. Valori ammessi: ${Object.keys(CAMPI_ORDINABILI).join(', ')}` });
+  }
+  const direzioneSql = direzione.toLowerCase() === 'asc' ? 'ASC' : 'DESC';
+
+  // Costruzione dinamica dei filtri
+  const condizioni = [];
+  const valori = [];
+  let i = 1;
+
+  if (stato) {
+    condizioni.push(`pv.stato = $${i++}`);
+    valori.push(stato);
+  }
+  if (cliente_id) {
+    condizioni.push(`pv.cliente_id = $${i++}`);
+    valori.push(cliente_id);
+  }
+  if (spazio_id) {
+    condizioni.push(`pv.spazio_id = $${i++}`);
+    valori.push(spazio_id);
+  }
+  if (data_inizio_da) {
+    condizioni.push(`pv.data_inizio >= $${i++}`);
+    valori.push(data_inizio_da);
+  }
+  if (data_inizio_a) {
+    condizioni.push(`pv.data_inizio <= $${i++}`);
+    valori.push(data_inizio_a);
+  }
+  if (search) {
+    condizioni.push(`(c.nome ILIKE $${i} OR c.cognome ILIKE $${i})`);
+    valori.push(`%${search}%`);
+    i++;
+  }
+
+  const whereClause = condizioni.length > 0 ? `WHERE ${condizioni.join(' AND ')}` : '';
+
   try {
     const result = await pool.query(
       `SELECT pv.*,
@@ -32,7 +96,9 @@ router.get('/', auth, async (req, res) => {
        FROM preventivi pv
        JOIN clienti c ON pv.cliente_id = c.id
        JOIN spazi s ON pv.spazio_id = s.id
-       ORDER BY pv.created_at DESC`
+       ${whereClause}
+       ORDER BY ${colonnaOrdinamento} ${direzioneSql}`,
+      valori
     );
     res.json(result.rows);
   } catch (err) {
