@@ -29,8 +29,8 @@ function calcolaImporto(dataInizio, dataFine, prezzoGiorno) {
   return { giorni, importo: prezzoGiorno * giorni };
 }
 
-// GET /api/preventivi - lista preventivi con filtri e ordinamento
-router.get('/', auth, async (req, res) => {
+// POST /api/preventivi - lista preventivi con filtri e ordinamento
+router.post('/', auth, async (req, res) => {
   const {
     stato,
     cliente_id,
@@ -40,7 +40,7 @@ router.get('/', auth, async (req, res) => {
     search,
     ordina_per = 'created_at',
     direzione = 'desc',
-  } = req.query;
+  } = req.body;
 
   // Validazione stato
   if (stato && !STATI_PREVENTIVO_VALUES.includes(stato)) {
