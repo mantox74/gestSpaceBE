@@ -62,8 +62,8 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// POST /api/auth/register (solo ADMIN può creare utenti)
-router.post('/register', async (req, res) => {
+// POST /api/auth/create (solo ADMIN può creare utenti)
+router.post('/create', async (req, res) => {
   const { email, password, nome, cognome, ruolo } = req.body;
 
   try {
@@ -92,6 +92,11 @@ router.post('/register', async (req, res) => {
     console.error(err);
     res.status(500).json({ error: 'Errore interno del server' });
   }
+});
+
+// TODO: Implementare la logica per cambiare la password dell'utente
+router.put('/cambia-password', async (req, res) => {
+  const { id, nuovaPassword, vecchiaPassword } = req.body;
 });
 
 module.exports = router;
